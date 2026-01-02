@@ -1,0 +1,167 @@
+<!--This is boilerplate code that comes pre-packaged with the default setup.
+Feel free to edit it to your likings.-->
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0"
+    />
+
+    <style>
+      body {
+        margin: 0;
+        background-color: #1a1a1a;
+        color: #fff;
+        overflow: hidden;
+        font-family: monospace;
+      }
+
+      canvas.game_canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        outline: none;
+        display: block;
+        image-rendering: optimizeSpeed;
+        image-rendering: -moz-crisp-edges;
+        image-rendering: -o-crisp-edges;
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: optimize-contrast;
+        image-rendering: pixelated;
+        -ms-interpolation-mode: nearest-neighbor;
+        image-rendering: crisp-edges;
+      }
+      #loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        z-index: 10;
+        pointer-events: none;
+        transition: opacity 0.5s ease-out;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: spin 1s ease-in-out infinite;
+        margin: 0 auto 10px auto;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas
+      class="game_canvas"
+      id="canvas"
+      oncontextmenu="event.preventDefault()"
+      tabindex="-1"
+      onmousedown="window.focus()"
+    ></canvas>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <div>Loading WASM...</div>
+    </div>
+
+    <script type="text/javascript" src="odin.js"></script>
+
+    <script>
+      var odinMemoryInterface = new odin.WasmMemoryInterface();
+
+      // `4` for `js_wasm32` target, `8` for `js_wasm64p32` target.
+      odinMemoryInterface.setIntSize(4);
+      var odinImports = odin.setupDefaultImports(odinMemoryInterface);
+
+      var Module = {
+        onRuntimeInitialized: () => {
+          const loader = document.getElementById("loading");
+          if (loader) loader.style.opacity = 0;
+
+          wasmExports._start();
+        },
+
+        instantiateWasm: (imports, successCallback) => {
+          const readString = (ptr, len) => {
+            const mem = odinMemoryInterface.memory;
+            const bytes = new Uint8Array(mem.buffer, ptr, len);
+            return new TextDecoder("utf-8").decode(bytes);
+          };
+
+          const jsModule = {
+            js_save: (keyPtr, keyLen, dataPtr, dataLen) => {
+              const key = readString(keyPtr, keyLen);
+              const data = readString(dataPtr, dataLen);
+              localStorage.setItem(key, data);
+            },
+            js_load_size: (keyPtr, keyLen) => {
+              const key = readString(keyPtr, keyLen);
+              const item = localStorage.getItem(key);
+              return item ? item.length : 0;
+            },
+            js_load: (keyPtr, keyLen, destPtr, maxLen) => {
+              const key = readString(keyPtr, keyLen);
+              const item = localStorage.getItem(key);
+              if (!item) return;
+
+              const encoder = new TextEncoder();
+              const bytes = encoder.encode(item);
+
+              const mem = odinMemoryInterface.memory;
+              const dest = new Uint8Array(mem.buffer, destPtr, maxLen);
+              dest.set(bytes);
+            },
+          };
+
+          const newImports = {
+            ...odinImports,
+            ...imports,
+            env: {
+              ...odinImports.env,
+              ...imports.env,
+            },
+            js: jsModule,
+          };
+
+          //NOTE: make sure your wasm file is named index.wasm, otherwise this breaks
+          return WebAssembly.instantiateStreaming(
+            fetch("index.wasm"),
+            newImports,
+          ).then(function (output) {
+            odinMemoryInterface.setExports(output.instance.exports);
+            odinMemoryInterface.setMemory(output.instance.exports.memory);
+            return successCallback(output.instance);
+          });
+        },
+
+        print: (text) => {
+          console.log(text);
+        },
+
+        printErr: (text) => {
+          console.error(text);
+        },
+
+        canvas: document.getElementById("canvas"),
+      };
+    </script>
+
+    <!-- Emscripten injects its javascript here -->
+    {{{ SCRIPT }}}
+  </body>
+</html>
